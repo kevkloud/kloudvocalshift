@@ -1,0 +1,130 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths-ignore: ['**.md', 'docs/**']
+  pull_request:
+    paths-ignore: ['**.md', 'docs/**']
+  workflow_dispatch:
+
+# A newer push to the same branch makes the in-flight run obsolete. Without
+# this, three pushes a minute apart pay for three full matrix builds and only
+# the last one's result is ever read.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The DSP core has no JUCE dependency, so the claims this plugin makes about
+  # itself can be checked in seconds on a bare container -- no framework, no
+  # submodule, no audio backend. It runs first and independently, because it is
+  # the job whose failure actually means something is broken.
+  dsp:
+    name: DSP
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # No submodules: DSP-only never descends into libs/JUCE.
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: cmake -B build -DKVS_DSP_ONLY=ON -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Measure
+        run: ./build/measure profile
+
+  plugin:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # Both platforms build with Ninja. It is a single-config generator, which
+      # is what makes a compiler cache usable at all: the Xcode and MSBuild
+      # generators ignore CMAKE_<LANG>_COMPILER_LAUNCHER, so ccache never sees
+      # the compile. Ninja ships in both runner images, but install it rather
+      # than trust that.
+      - name: Ensure Ninja
+        shell: bash
+        run: |
+          if ! command -v ninja >/dev/null 2>&1; then
+            if [ "${{ runner.os }}" = "macOS" ]; then brew install ninja; else choco install ninja -y; fi
+          fi
+          ninja --version
+
+      # Ninja invokes cl.exe directly, so the MSVC environment has to be on the
+      # PATH; the runner does not set it up outside of MSBuild.
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # JUCE is a large, near-static dependency, so a warm cache is most of the
+      # build. Release carries no /Zi, which is the one MSVC flag ccache cannot
+      # cache through.
+      - name: Compiler cache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.name }}
+          max-size: 500M
+
+      - name: Configure
+        shell: bash
+        run: |
+          args=(-B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+                -DCMAKE_C_COMPILER_LAUNCHER=ccache
+                -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # Universal binaries cost roughly double to compile and only matter
+            # for something someone downloads, so they are built for tags only.
+            if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              args+=(-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64")
+            else
+              args+=(-DCMAKE_OSX_ARCHITECTURES="arm64")
+            fi
+          fi
+          cmake "${args[@]}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      # Located rather than hardcoded: the artefact directory moved once
+      # already, under a rename, and silently broke this step.
+      - name: Stage artefacts
+        shell: bash
+        run: |
+          mkdir -p out
+          vst3=$(find build -type d -name 'KloudVocalShift.vst3' | head -1)
+          if [ -z "$vst3" ]; then echo "no VST3 produced"; find build -name '*.vst3' -o -name '*_artefacts' | head -20; exit 1; fi
+          cp -R "$vst3" out/
+          au=$(find build -type d -name 'KloudVocalShift.component' | head -1)
+          if [ -n "$au" ]; then cp -R "$au" out/; fi
+          cp LICENSE out/LICENSE.txt
+          ls -la out/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KloudVocalShift-${{ matrix.name }}
+          path: out/
