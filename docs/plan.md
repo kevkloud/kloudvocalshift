@@ -18,17 +18,24 @@ channel, tell it what the tempo relationship would have been.
 
 The part it explicitly does **not** reproduce is the performance change — the
 clipped diction and quicker vibrato you get from singing to a slower click. That
-is not a signal-processing effect, it is a different take. If that turns out to
-be most of what you were after, this plugin is the wrong tool and the answer is
-to keep tracking slow. Worth finding out early.
+is not a signal-processing effect, it is a different take.
+
+**Settled 2026-08-30:** the timbre is the whole point. If the delivery is what is
+wanted, the answer is to track at another tempo and warp normally, without this.
+The plugin does not need to chase it.
 
 ## 2. What is built
 
 - Two-stage round trip: phase vocoder at the ratio, phase vocoder at the
-  reciprocal. Same length in as out.
+  reciprocal. Same length in as out. Symmetric — 100 to 80 and 100 to 120 both
+  go through both stages, which is correct: a slow-down duplicates frames where
+  a speed-up drops them, and the round trip undoes neither.
 - Identity phase locking, so the level holds within 0.26 dB across the whole
   ratio range instead of collapsing 27 dB at three passes.
-- Cepstral spectral-envelope shift as a third stage, exact identity at 0 st.
+- Cepstral spectral-envelope shift, folded onto the last warp stage rather than
+  given a transform of its own. Exact identity at 0 st. Manual, not derived from
+  the ratio — plain Complex does not move formants, and matching that is the
+  decision.
 - Amount as a ratio interpolator rather than a dry/wet.
 - Passes, 1 to 3.
 - Window: Short / Normal / Long, scaled by session rate so the *time* stays put.
@@ -37,6 +44,10 @@ to keep tracking slow. Worth finding out early.
   against a measured impulse.
 - JUCE-free DSP core, tested on a bare container in CI.
 - Offline profiler (`measure profile`, `windows`, `formant`).
+- Offline panel renderer (`panel out.png`), so a layout change can be looked at
+  without loading a DAW.
+- pluginval at strictness 10 and `auval` in CI; tagged releases built as
+  universal macOS binaries by GitHub Actions, never by hand.
 
 ## 3. What is missing, in priority order
 
@@ -50,22 +61,38 @@ window is wrong" or "one pass is already too much".
 
 ### 3.2 Latency
 
-149 ms at Normal, 320 ms at three passes. Reported honestly and compensated in
-the arrangement, but far too much to monitor a take through, which is an
-uncomfortable thing to say about a plugin whose whole pitch is "do it while you
-track".
+Two rounds of work done. What is left has quality costs, so it should be a
+control rather than a decision made on somebody's behalf.
 
-Three things would cut it:
+**Done.** 149.3 ms to 128.0 ms at Normal / 1 pass:
 
-- The chain currently delays a full window per stage. A tighter overlap-add
-  hands back all but a hop, which is a 25 % saving for free.
-- The formant stage does not need to be a separate transform. Folded into the
-  last warp stage it is a third off.
-- Short window at one pass is already 75 ms, which is borderline usable. If
-  Short turns out to sound right, the default should probably move.
+- Folded the formant shift onto the last warp stage instead of giving it a
+  transform of its own. −43 ms and a third off the CPU, for a bit-identical
+  output. Free.
+- Then gave 21 ms of it straight back: the jitter margin had to grow from two
+  hops to stages + 2, because a sweep over every ratio, window, pass count and
+  block size found the chain underrunning at small block sizes. An underrun
+  shifts everything after it a sample off the grid, silently. Not a trade worth
+  making.
 
-Best case those get Normal/1 to roughly 75 ms, which is monitorable with a bit
-of discipline. Worth doing before anything cosmetic.
+**Still available, with what each one costs.**
+
+| Change | Saves | Costs |
+|---|---|---|
+| Default to **Short** window | 128 → 64 ms | a different sound, not obviously worse — Short measured *more* pulse loss (−4.52 dB vs −3.25) and sharper consonants. Wants an ear. |
+| Asymmetric windows: Normal in, Short out | 128 → 96 ms | the second stage does less damage than the first, so the character stops being symmetrical. Unknown until heard. |
+| Hop from N/4 to N/2 | nothing | overlap-add stops summing to a constant; the identity claim dies. **No.** |
+| Drop to one stage and emulate the round trip | 128 → 64 ms | this was the first design. It was measured and it did almost nothing — a vocoder at a 1:1 frame rate is nearly transparent. **No.** |
+| Shrink the window at high sample rates | 0 | the window is scaled by rate so the *time* stays put, which is what fixes the character. **No.** |
+
+**The RT vs Quality control.** The honest version of the above is a mode switch
+whose Realtime setting picks Short window and one pass and reports ~64 ms, and
+whose Quality setting leaves everything as it is. 64 ms is still not
+monitorable — for that the window would have to come down to 256 samples, which
+is 5 ms of analysis and cannot resolve a male fundamental, so the effect stops
+being this effect. **There is no version of this that monitors a live take.**
+The physics of a phase vocoder is that it needs a window long enough to see a
+pitch period, and a chain of them needs several.
 
 ### 3.3 The ratio is not the only axis
 
@@ -107,11 +134,38 @@ sweep, and the failure mode is an underrun, which is a click. There is a counter
 for it (`WarpChain::getUnderruns`) and the tests assert it stays at zero, but
 nothing smooths the ratio yet.
 
-### 3.7 Release engineering
+### 3.7 GUI
 
-- Universal binaries on tags — in CI, untested.
-- Code signing and notarisation. Needs an Apple Developer account.
-- pluginval in CI before anything is tagged.
+Compacted to 568 x 208 with the selectors carrying their own labels ("Normal",
+"2 passes") so nothing needs a caption. Renderable offline with `./build/panel`.
+
+Not yet decided: what it should actually look like. It currently borrows
+FrostyEQ's finish without having its own idea. Candidates worth trying —
+
+- A waveform or crest meter showing the pulse flattening in real time. That is
+  the one thing this plugin does that nothing else does, and there is currently
+  no picture of it anywhere on the panel.
+- Recorded and Playing as typed number fields rather than knobs. They are
+  tempos; nobody wants to dial 100 with a mouse.
+- Collapsing WARP into a single "100 → 120" widget.
+
+### 3.8 Release engineering
+
+Done: universal binaries on tags, pluginval at strictness 10, `auval`, draft
+GitHub Releases with install instructions in the zip.
+
+Left:
+
+- **Code signing and notarisation.** Needs an Apple Developer account ($99/yr).
+  Without it, every macOS user has to run an `xattr` command from the terminal,
+  which is documented in `docs/INSTALL.md` but is a real drop-off point and
+  reads as untrustworthy to exactly the audience being built here.
+- Windows code signing. Cheaper to skip; SmartScreen warnings on a plain zip of
+  a `.vst3` are milder than Gatekeeper's.
+- A macOS `.pkg` and a Windows installer, so nobody has to know where the plugin
+  folder is.
+- Linux VST3. Cheap in CI, and Bitwig/Reaper users notice.
+- AAX would need a paid Avid signature. Not worth it yet.
 
 ## 4. Suggested order of work
 
@@ -128,24 +182,18 @@ nothing smooths the ratio yet.
 
 ## Still open
 
-1. **Is the timbre the whole point, or is the performance change half of it?**
-   The plugin can only give you one of the two. If a take through this does not
-   land the way tracking slow does, the answer is probably that the delivery was
-   doing more work than the vocoder was, and the design should change to
-   something that helps you *keep* tracking slow rather than replace it.
+1. **Is one pass at 1.2 enough?** Three passes is measurably more damage but it
+   triples the latency. A **Lock** control (3.3) is the cheaper way to get more
+   character, and it does not cost a millisecond.
 
-2. **One pass or three?** Three passes is measurably more damage but it is not
-   obviously *better* damage, and it triples the latency. If one pass at a 1.2
-   ratio is already too subtle, the fix might be a Lock control (3.3) rather
-   than more round trips.
+2. **Short or Normal as the default?** Short is half the latency and measured
+   *more* pulse loss. If it sounds right, the default should move and the
+   latency problem mostly goes away.
 
-3. **Should Formant follow the ratio automatically?** In Live, warping alone
-   does not move the formants — you have to reach for Complex Pro. But if the
-   sound you are chasing is always warp *plus* formant, an "auto" mode that
-   derives the shift from the ratio would make the plugin one knob instead of
-   two. It would also stop being an emulation of anything.
+3. **What should the panel be a picture of?** See 3.7. There is no visual for
+   the one thing this plugin does.
 
-4. **Which way does the ratio go?** Recording at 100 and playing at 120 is a
-   speed-up. Recording at 100 and playing at 80 is a slow-down, and the two do
-   not sound the same even though they lose the same proportion of frames. If
-   only one direction is ever used in practice, half of the range is clutter.
+4. **Signing.** $99/yr buys away the single worst moment in the install, on the
+   platform most of this audience uses. Probably the highest-leverage money in
+   the whole project, and it is worth deciding before the first release rather
+   than after a wave of "it says the developer cannot be verified" comments.

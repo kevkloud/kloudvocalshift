@@ -1,7 +1,5 @@
 #include "WarpReadout.h"
 
-#include <cmath>
-
 namespace kloudvocalshift::gui
 {
 
@@ -40,31 +38,29 @@ void WarpReadout::paint (juce::Graphics& g)
     const auto amount = juce::jlimit (0.0f, 1.0f, source.amount() * 0.01f);
     const auto applied = 1.0f + amount * (ratio - 1.0f);
 
-    auto inner = area.reduced (12, 8);
-    auto headline = inner.removeFromTop (30);
+    auto inner = area.reduced (10, 0);
 
     // Grey when the chain is an identity, accented when it is not. The single
-    // most useful thing the panel can tell you at a glance is whether this is
-    // doing anything at all.
+    // most useful thing the panel can say at a glance is whether this is doing
+    // anything at all.
     g.setColour (applied == 1.0f ? theme::textDim : theme::accent);
-    g.setFont (theme::labelFont (23.0f));
-    g.drawText (juce::String (applied, 3) + "x", headline, juce::Justification::centredLeft, false);
+    g.setFont (theme::labelFont (18.0f));
+    g.drawText (juce::String (applied, 3) + "x", inner.removeFromLeft (62),
+                juce::Justification::centredLeft, false);
 
     g.setColour (theme::textDim);
-    g.setFont (theme::labelFont (11.0f));
-    g.drawText (juce::String (juce::roundToInt (recorded)) + " to "
-                    + juce::String (juce::roundToInt (playing)) + " BPM",
-                headline, juce::Justification::centredRight, false);
-
     g.setFont (theme::labelFont (10.0f));
 
-    g.drawText (applied == 1.0f
-                    ? juce::String ("identity - the output is the input")
-                    : juce::String ("warped and unwarped, same length"),
-                inner.removeFromTop (14), juce::Justification::centredLeft, false);
+    g.drawText (juce::String (source.latencyMs(), 0) + " ms latency",
+                inner.removeFromRight (86), juce::Justification::centredRight, false);
 
-    g.drawText (juce::String (source.latencyMs(), 1) + " ms latency",
-                inner.removeFromTop (14), juce::Justification::centredLeft, false);
+    g.drawText (juce::String (juce::roundToInt (recorded)) + " to "
+                    + juce::String (juce::roundToInt (playing)) + " BPM",
+                inner.removeFromLeft (84), juce::Justification::centredLeft, false);
+
+    g.drawText (applied == 1.0f ? "identity - the output is the input"
+                                : "warped and unwarped, same length",
+                inner, juce::Justification::centredLeft, false);
 }
 
 } // namespace kloudvocalshift::gui

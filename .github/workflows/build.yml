@@ -110,6 +110,45 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      # pluginval is the industry's own conformance suite: it opens the plugin
+      # the way a host does and then does every rude thing a host is allowed to
+      # do -- reordered calls, silly block sizes, parameter storms, state
+      # restored into a different instance. Somebody downloading this will run
+      # it in a DAW nobody here owns, so "it worked in Ableton on my machine" is
+      # not evidence.
+      - name: Install pluginval
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            curl -sL https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip -o pluginval.zip
+            unzip -q pluginval.zip
+            echo "PLUGINVAL=$PWD/pluginval.app/Contents/MacOS/pluginval" >> $GITHUB_ENV
+          else
+            curl -sL https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -o pluginval.zip
+            unzip -q pluginval.zip
+            echo "PLUGINVAL=$PWD/pluginval.exe" >> $GITHUB_ENV
+          fi
+
+      - name: Validate VST3
+        shell: bash
+        run: |
+          vst3=$(find build -type d -name 'KloudVocalShift.vst3' | head -1)
+          "$PLUGINVAL" --strictness-level 10 --validate-in-process --timeout-ms 300000 \
+                       --validate "$vst3"
+
+      # auval is what macOS itself runs before it will let an AU load, and a
+      # component that fails it is invisible in Logic no matter how well it
+      # works everywhere else.
+      - name: Validate AU
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          au=$(find build -type d -name 'KloudVocalShift.component' | head -1)
+          mkdir -p ~/Library/Audio/Plug-Ins/Components
+          cp -R "$au" ~/Library/Audio/Plug-Ins/Components/
+          killall -9 AudioComponentRegistrar || true
+          auval -v aufx Kvsh LT3a
+
       # Located rather than hardcoded: the artefact directory moved once
       # already, under a rename, and silently broke this step.
       - name: Stage artefacts

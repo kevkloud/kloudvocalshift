@@ -74,7 +74,7 @@ void WarpChain::setWarp (double newRatio, double newFormant) noexcept
     // until the two tempos differ.
     const auto engaged = (ratio != 1.0);
 
-    for (int i = 0; i < activeStages - 1; ++i)
+    for (int i = 0; i < activeStages; ++i)
         stages[(size_t) i].setVocoderPhase (engaged);
 
     for (int p = 0; p < activePasses; ++p)
@@ -91,30 +91,28 @@ void WarpChain::setWarp (double newRatio, double newFormant) noexcept
 
 void WarpChain::rebuild() noexcept
 {
-    activeStages = 2 * activePasses + 1;
+    activeStages = 2 * activePasses;
 
     for (int i = 0; i < activeStages; ++i)
     {
-        auto& s = stages[(size_t) i];
-
-        // The last stage is the formant stage: ratio 1 and the analysis phase
-        // passed through, so it is an exact identity at zero shift.
-        const auto isFormantStage = (i == activeStages - 1);
-
-        s.setVocoderPhase (! isFormantStage);
-        s.setFormant (0.0);
-
-        if (isFormantStage)
-            s.setRatio (1.0);
+        stages[(size_t) i].setVocoderPhase (true);
+        stages[(size_t) i].setFormant (0.0);
     }
 
-    // A window per stage, plus two hops of margin for the burst jitter between
-    // two stages whose ratios are reciprocal but whose frames do not line up.
+    // A window per stage, plus margin.
+    //
+    // The margin is burst jitter, not start-up -- the priming in reset() deals
+    // with that. Each stage releases only up to the start of its latest frame,
+    // so it hands the next stage an irregular trickle, and every stage adds
+    // about a hop of that. Swept over every ratio, block size and pass count,
+    // the chain needs stages + 1 hops before it stops underrunning; this is
+    // that plus one, because an underrun shifts everything after it a sample
+    // off the grid and is exactly the kind of thing nobody catches by ear.
     // Not start-up -- the priming in reset() has already dealt with that. The
     // figure is exact, and asserted against a measured impulse in the tests,
     // because a plugin that misreports its latency drags everything downstream
     // of it off the grid and the host has no way to notice.
-    margin = 2 * analysisHop;
+    margin = (activeStages + 2) * analysisHop;
     latency = activeStages * windowSize + margin;
 }
 

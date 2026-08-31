@@ -32,17 +32,17 @@ enum class Window { shortWindow = 0, normal = 1, longWindow = 2 };
     Passes runs the pair more than once, for material that needs more than one
     warp's worth. The cost is latency: every stage in the chain is a window.
 
-    The formant stage is separate and always present, running at ratio 1 with
-    the analysis phase passed through, which makes it an exact identity when the
-    shift is zero. Keeping it in the chain rather than switching it in and out
-    is what keeps the reported latency from changing every time the knob leaves
-    zero.
+    The formant shift rides on the last stage rather than getting a transform of
+    its own. It only touches magnitudes and never reads or writes phase, so it
+    composes with the warp instead of fighting it -- and folding it in saves a
+    whole window of latency and a third of the CPU, which on a plugin that costs
+    this much delay is not a saving to leave on the table.
 */
 class WarpChain
 {
 public:
     static constexpr int kMaxPasses = 3;
-    static constexpr int kMaxStages = 2 * kMaxPasses + 1;
+    static constexpr int kMaxStages = 2 * kMaxPasses;
 
     void prepare (double sampleRate, int fftSize, int maxBlockSize, int passes);
     void reset();

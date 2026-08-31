@@ -7,17 +7,14 @@
 
 /** The panel.
 
-    Left is the warp: the two tempos and whether the second one comes from the
-    host. Middle is the character of it -- how much of the vocoder's phase to
-    use, how many frames to lose, how far to move the formants, and how long a
-    window to do it in. Right is output.
+    Three groups of two knobs and a reporting strip, in one screenful with no
+    dead space. Left is the warp -- the two tempos and whether the second comes
+    from the host. Middle is the character of it. Right is output.
 
-    The readout sits under the tempos because the ratio is the thing that
-    decides whether any of the rest of the panel is doing anything at all.
-
-    The finish is FrostyEQ's and KloudFormant's, which is Ableton's: flat, no
-    bevels, thin value arcs, a dark well for anything that reports rather than
-    controls.
+    The two selectors carry their own meaning rather than a caption ("Normal",
+    "2 passes"), which is what lets the whole thing fit at this width. The
+    finish is FrostyEQ's and KloudFormant's, which is Ableton's: flat, no
+    bevels, thin value arcs, a dark well for anything that reports.
 */
 class KloudVocalShiftAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                                   private juce::Timer
@@ -32,6 +29,7 @@ public:
 private:
     void timerCallback() override;
     void drawSection (juce::Graphics&, juce::Rectangle<int>, const juce::String& caption) const;
+    void styleChooser (juce::ComboBox&);
 
     KloudVocalShiftAudioProcessor& processorRef;
     kloudvocalshift::gui::KloudVocalShiftLookAndFeel lookAndFeel;
@@ -45,7 +43,6 @@ private:
     kloudvocalshift::gui::SwitchButton followHost, bypass;
 
     juce::ComboBox windowChooser, passesChooser;
-    juce::Label windowCaption, passesCaption;
     std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> windowAttachment,
                                                                            passesAttachment;
 

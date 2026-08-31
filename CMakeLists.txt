@@ -69,16 +69,26 @@ if(NOT KVS_DSP_ONLY)
 
     target_include_directories(KloudVocalShift PRIVATE src)
 
+    # Everything this plugin does not do. Each of these pulls in code, a system
+    # framework, or a phone-home that ends up in the binary a stranger downloads,
+    # and none of them earns its place in an audio effect with eight knobs.
     target_compile_definitions(KloudVocalShift PUBLIC
         JUCE_WEB_BROWSER=0
         JUCE_USE_CURL=0
+        JUCE_USE_CAMERA=0
         JUCE_VST3_CAN_REPLACE_VST2=0
-        JUCE_REPORT_APP_USAGE=0)
+        JUCE_REPORT_APP_USAGE=0
+        JUCE_DISPLAY_SPLASH_SCREEN=0
+        JUCE_MODAL_LOOPS_PERMITTED=0
+        JUCE_STRICT_REFCOUNTEDPOINTER=1
+        JUCE_LOG_ASSERTIONS=0)
 
+    # juce_dsp is deliberately absent: the transform, the windowing and the
+    # overlap-add are all in src/dsp and depend on nothing but the standard
+    # library, which is what lets the core be tested on a bare container.
     target_link_libraries(KloudVocalShift
         PRIVATE
             juce::juce_audio_utils
-            juce::juce_dsp
         PUBLIC
             juce::juce_recommended_config_flags
             juce::juce_recommended_lto_flags
@@ -121,10 +131,21 @@ if(NOT KVS_DSP_ONLY)
         KloudVocalShift
         juce::juce_audio_utils
         juce::juce_audio_processors
-        juce::juce_dsp
         juce::juce_events
         juce::juce_recommended_config_flags
         juce::juce_recommended_warning_flags)
 
     add_test(NAME parameters COMMAND KloudVocalShiftParamTests)
+
+    # Offline panel renderer. Not a test and not in CI -- it exists so a layout
+    # change can be looked at without loading a DAW.
+    add_executable(panel tools/panel/main.cpp)
+    target_include_directories(panel PRIVATE src)
+    target_link_libraries(panel PRIVATE
+        KloudVocalShift
+        juce::juce_audio_utils
+        juce::juce_audio_processors
+        juce::juce_events
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_warning_flags)
 endif()

@@ -26,6 +26,8 @@ namespace
     constexpr double kRate = 48000.0;
 
     /** Runs a signal through a freshly prepared core in blocks. */
+    int underruns = 0;
+
     std::vector<float> run (DspCore::Params p, std::vector<float> input,
                             int blockSize = 512, double rate = kRate,
                             int* latencyOut = nullptr)
@@ -44,6 +46,8 @@ namespace
 
             core.process (&channel, 1, n);
         }
+
+        underruns += core.getUnderruns();
 
         return input;
     }
@@ -362,6 +366,11 @@ int main()
                    "null at " + std::to_string ((int) rate) + " Hz");
         }
     }
+
+    // Accumulated over every run above, which is a few hundred passes across
+    // every ratio, window, pass count, block size and sample rate the plugin
+    // supports.
+    check (underruns == 0, "no buffer underrun anywhere in the whole suite");
 
     std::printf ("\n%s\n\n", failures == 0 ? "all passed" : "FAILURES");
 

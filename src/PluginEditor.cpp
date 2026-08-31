@@ -4,8 +4,10 @@ using namespace kloudvocalshift;
 
 namespace
 {
-    constexpr int kWidth = 640, kHeight = 300;
-    constexpr int kMargin = 12, kSectionPad = 8, kCaptionHeight = 16;
+    constexpr int kWidth = 568, kHeight = 208;
+    constexpr int kMargin = 12, kGap = 10, kSectionPad = 8;
+    constexpr int kHeader = 20, kReadout = 26, kCaption = 13, kFooter = 19;
+    constexpr int kSection = 158, kMeters = 40;
 
     float raw (juce::AudioProcessorValueTreeState& s, const char* id)
     {
@@ -23,10 +25,10 @@ KloudVocalShiftAudioProcessorEditor::KloudVocalShiftAudioProcessorEditor (KloudV
       {
           gui::WarpReadout::Source s;
 
-          s.recorded = [&p] { return raw (p.getApvts(), params::kRecorded); };
-          // Not the parameter: with Follow Host on, the tempo actually in use is
-          // the host's, and the panel has to agree with the audio.
-          s.playing  = [&p] { return p.getPlayingTempo(); };
+          s.recorded  = [&p] { return raw (p.getApvts(), params::kRecorded); };
+          // Not the parameter: with Follow Host on, the tempo in use is the
+          // host's, and the panel has to agree with the audio.
+          s.playing   = [&p] { return p.getPlayingTempo(); };
           s.amount    = [&p] { return raw (p.getApvts(), params::kAmount); };
           s.latencyMs = [&p] { return p.getLatencyMs(); };
 
@@ -48,35 +50,24 @@ KloudVocalShiftAudioProcessorEditor::KloudVocalShiftAudioProcessorEditor (KloudV
     addAndMakeVisible (readout);
 
     for (auto* knob : { &recorded, &playing, &amount, &formant, &mix, &trim })
+    {
+        knob->setKnobDiameter (40);
         addAndMakeVisible (*knob);
+    }
 
     for (auto* toggle : { &followHost, &bypass })
         addAndMakeVisible (*toggle);
 
-    windowCaption.setText ("WINDOW", juce::dontSendNotification);
-    windowCaption.setJustificationType (juce::Justification::centredLeft);
-    windowCaption.setColour (juce::Label::textColourId, theme::textDim);
-    addAndMakeVisible (windowCaption);
-
+    // The items say what the control is, so neither selector needs a caption --
+    // which is most of what lets the panel fit at this width.
     windowChooser.addItemList ({ "Short", "Normal", "Long" }, 1);
-    windowChooser.setColour (juce::ComboBox::backgroundColourId, theme::panelDeep);
-    windowChooser.setColour (juce::ComboBox::outlineColourId, theme::outline);
-    windowChooser.setColour (juce::ComboBox::textColourId, theme::text);
-    addAndMakeVisible (windowChooser);
+    passesChooser.addItemList ({ "1 pass", "2 passes", "3 passes" }, 1);
+
+    styleChooser (windowChooser);
+    styleChooser (passesChooser);
 
     windowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
         p.getApvts(), params::kWindow, windowChooser);
-
-    passesCaption.setText ("PASSES", juce::dontSendNotification);
-    passesCaption.setJustificationType (juce::Justification::centredLeft);
-    passesCaption.setColour (juce::Label::textColourId, theme::textDim);
-    addAndMakeVisible (passesCaption);
-
-    passesChooser.addItemList ({ "1", "2", "3" }, 1);
-    passesChooser.setColour (juce::ComboBox::backgroundColourId, theme::panelDeep);
-    passesChooser.setColour (juce::ComboBox::outlineColourId, theme::outline);
-    passesChooser.setColour (juce::ComboBox::textColourId, theme::text);
-    addAndMakeVisible (passesChooser);
 
     passesAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
         p.getApvts(), params::kPasses, passesChooser);
@@ -95,12 +86,21 @@ KloudVocalShiftAudioProcessorEditor::~KloudVocalShiftAudioProcessorEditor()
     setLookAndFeel (nullptr);
 }
 
+void KloudVocalShiftAudioProcessorEditor::styleChooser (juce::ComboBox& box)
+{
+    box.setColour (juce::ComboBox::backgroundColourId, theme::panelDeep);
+    box.setColour (juce::ComboBox::outlineColourId, theme::outline);
+    box.setColour (juce::ComboBox::textColourId, theme::text);
+    box.setColour (juce::ComboBox::arrowColourId, theme::textDim);
+    addAndMakeVisible (box);
+}
+
 //==============================================================================
 void KloudVocalShiftAudioProcessorEditor::timerCallback()
 {
-    // Playing is still the stored fallback while Follow Host is on, so the knob
-    // is greyed rather than hidden -- it is what the plugin falls back to in an
-    // offline render, and hiding it would make that fallback invisible.
+    // Playing stays the stored fallback while Follow Host is on -- it is what an
+    // offline render uses when the host reports no tempo -- so the knob is
+    // greyed rather than hidden.
     const auto shouldBeEnabled = raw (processorRef.getApvts(), params::kFollowHost) < 0.5f;
 
     if (shouldBeEnabled != playingKnobEnabled)
@@ -115,71 +115,52 @@ void KloudVocalShiftAudioProcessorEditor::resized()
 {
     auto bounds = getLocalBounds().reduced (kMargin);
 
-    bounds.removeFromTop (22);                 // title strip
+    bounds.removeFromTop (kHeader);
+    readout.setBounds (bounds.removeFromTop (kReadout));
+    bounds.removeFromTop (kGap);
 
-    auto meters = bounds.removeFromRight (48);
-    inputMeter.setBounds  (meters.removeFromTop (meters.getHeight() / 2).reduced (4, 0));
-    outputMeter.setBounds (meters.reduced (4, 0));
-    bounds.removeFromRight (kMargin);
+    auto meters = bounds.removeFromRight (kMeters);
+    inputMeter.setBounds  (meters.removeFromTop (meters.getHeight() / 2).reduced (3, 0));
+    outputMeter.setBounds (meters.reduced (3, 0));
+    bounds.removeFromRight (kGap);
 
-    warpSection = bounds.removeFromLeft (232);
-    bounds.removeFromLeft (kMargin);
+    warpSection = bounds.removeFromLeft (kSection);
+    bounds.removeFromLeft (kGap);
+    characterSection = bounds.removeFromLeft (kSection);
+    bounds.removeFromLeft (kGap);
+    outputSection = bounds;
 
-    outputSection = bounds.removeFromRight (120);
-    bounds.removeFromRight (kMargin);
-
-    characterSection = bounds;
-
-    const auto place = [] (juce::Rectangle<int> cell, gui::LabelledKnob& knob)
+    // Every section is two knobs over one footer row, so they are laid out by
+    // the same function rather than three near-identical blocks.
+    const auto layOut = [] (juce::Rectangle<int> section,
+                            gui::LabelledKnob& left, gui::LabelledKnob& right,
+                            juce::Component& footerLeft, juce::Component* footerRight)
     {
-        knob.setBounds (cell.withSizeKeepingCentre (
-            juce::jmin (cell.getWidth(), 86), knob.getPreferredHeight()));
+        auto inner = section.reduced (kSectionPad);
+        inner.removeFromTop (kCaption);
+
+        auto row = inner.removeFromTop (left.getPreferredHeight());
+        const auto cell = row.getWidth() / 2;
+
+        left.setBounds  (row.removeFromLeft (cell));
+        right.setBounds (row);
+
+        auto footer = inner.removeFromBottom (kFooter);
+
+        if (footerRight == nullptr)
+        {
+            footerLeft.setBounds (footer);
+            return;
+        }
+
+        footerLeft.setBounds (footer.removeFromLeft (cell - 3));
+        footer.removeFromLeft (6);
+        footerRight->setBounds (footer);
     };
 
-    {
-        auto inner = warpSection.reduced (kSectionPad);
-        inner.removeFromTop (kCaptionHeight);
-
-        auto row = inner.removeFromTop (recorded.getPreferredHeight());
-        place (row.removeFromLeft (row.getWidth() / 2), recorded);
-        place (row, playing);
-
-        inner.removeFromTop (4);
-        followHost.setBounds (inner.removeFromTop (20).reduced (24, 0));
-        inner.removeFromTop (6);
-        readout.setBounds (inner);
-    }
-
-    {
-        auto inner = characterSection.reduced (kSectionPad);
-        inner.removeFromTop (kCaptionHeight);
-
-        auto row = inner.removeFromTop (amount.getPreferredHeight());
-
-        place (row.removeFromLeft (row.getWidth() / 2), amount);
-        place (row, formant);
-
-        inner.removeFromTop (10);
-
-        auto footer = inner.removeFromTop (20);
-        windowCaption.setBounds (footer.removeFromLeft (52));
-        windowChooser.setBounds (footer.removeFromLeft (74));
-        footer.removeFromLeft (10);
-        passesCaption.setBounds (footer.removeFromLeft (48));
-        passesChooser.setBounds (footer.removeFromLeft (52));
-    }
-
-    {
-        auto inner = outputSection.reduced (kSectionPad);
-        inner.removeFromTop (kCaptionHeight);
-
-        auto row = inner.removeFromTop (mix.getPreferredHeight());
-        place (row.removeFromLeft (row.getWidth() / 2), mix);
-        place (row, trim);
-
-        inner.removeFromTop (10);
-        bypass.setBounds (inner.removeFromTop (20).reduced (4, 0));
-    }
+    layOut (warpSection,      recorded, playing, followHost, nullptr);
+    layOut (characterSection, amount,   formant, windowChooser, &passesChooser);
+    layOut (outputSection,    mix,      trim,    bypass, nullptr);
 }
 
 //==============================================================================
@@ -194,7 +175,7 @@ void KloudVocalShiftAudioProcessorEditor::drawSection (juce::Graphics& g, juce::
 
     g.setColour (theme::textDim);
     g.setFont (theme::labelFont (10.0f));
-    g.drawText (caption, area.reduced (kSectionPad, 6).removeFromTop (kCaptionHeight),
+    g.drawText (caption, area.reduced (kSectionPad, 5).removeFromTop (kCaption),
                 juce::Justification::topLeft, false);
 }
 
@@ -202,7 +183,7 @@ void KloudVocalShiftAudioProcessorEditor::paint (juce::Graphics& g)
 {
     g.fillAll (theme::background);
 
-    auto title = getLocalBounds().reduced (kMargin).removeFromTop (18);
+    auto title = getLocalBounds().reduced (kMargin).removeFromTop (kHeader);
 
     g.setColour (theme::text);
     g.setFont (theme::labelFont (13.0f));
@@ -211,7 +192,9 @@ void KloudVocalShiftAudioProcessorEditor::paint (juce::Graphics& g)
     g.setColour (theme::textDim);
     g.setFont (theme::labelFont (10.0f));
     g.drawText ("warp character, in place",
-                title.withTrimmedLeft (128), juce::Justification::topLeft, false);
+                title.withTrimmedLeft (126), juce::Justification::topLeft, false);
+    g.drawText ("offline / mixing - not for monitoring a take",
+                title, juce::Justification::topRight, false);
 
     drawSection (g, warpSection,      "WARP");
     drawSection (g, characterSection, "CHARACTER");

@@ -6,6 +6,11 @@ happens to the timing. VST3 / AU / Standalone.
 Track at the song's tempo, hear the song's rhythm, and still get the sound you
 were getting by tracking at 100 and playing it back at 120.
 
+**This is a mixing plugin, not a tracking one.** It costs around 128 ms of
+latency. Your DAW compensates for that on playback and everything stays in time,
+but you cannot monitor yourself through it while you record. Record dry, then
+reach for it.
+
 ## Status
 
 MVP. It builds, it installs, it is tested, and the DSP does what this document
@@ -116,7 +121,7 @@ From `tests/DspTests.cpp`, which asserts every claim below.
 
 | | |
 |---|---|
-| Equal tempos | null to **−134 dB** against the delayed input |
+| Equal tempos | null to **−138 dB** against the delayed input |
 | Equal tempos, Amount 100 %, 3 passes | still null |
 | Amount at 0 % | null |
 | Bypass, Mix at 0 % | null |
@@ -126,8 +131,9 @@ From `tests/DspTests.cpp`, which asserts every claim below.
 | Same settings twice | **bitwise identical** |
 | Silence in | silence out |
 | Level change, whole ratio range | within **0.26 dB** |
-| Loudest output over ratio × formant | **+1.9 dB** |
+| Loudest output over ratio × formant | **+3.1 dB** |
 | 44.1 / 48 / 88.2 / 96 kHz | null at all four |
+| Buffer underruns, whole suite | **zero**, across every ratio × window × pass × block size |
 
 ### What a warp costs the pulse
 
@@ -151,18 +157,43 @@ is hard to A/B any other way.
 
 ### Latency
 
-Three stacked short-time transforms are not free.
+Stacked short-time transforms are not free. Two per pass, plus a buffer for the
+jitter between two stages whose ratios are reciprocal but whose frames do not
+line up.
 
 ```
   window   samples   1 pass     3 passes
-  Short    1024      74.7 ms    160.0 ms
-  Normal   2048      149.3 ms   320.0 ms
-  Long     4096      298.7 ms   640.0 ms
+  Short    1024      64.0 ms    170.7 ms
+  Normal   2048      128.0 ms   341.3 ms
+  Long     4096      256.0 ms   682.7 ms
 ```
 
-Reported to the host, so delay compensation handles it in the arrangement. It is
-too much to monitor a live take through, and that is the trade for doing this in
-place rather than on a warped clip.
+Reported to the host exactly — asserted against a measured impulse — so delay
+compensation puts everything back on the grid in the arrangement. It is still
+far too much to monitor a live take through. That is the trade for doing this in
+place instead of on a warped clip, and it is why the header of the plugin says
+so.
+
+## What else is out there
+
+Nothing sells this. The neighbours each do one part of it:
+
+| | What it is | What it does not do |
+|---|---|---|
+| [Soundtoys Little AlterBoy](https://www.soundtoys.com/product/little-alterboy/) | the default "thin vocal" plugin: pitch + formant | no vocoder character at all — it is trying to be clean |
+| [Waves Vocal Bender](https://www.waves.com/plugins/vocal-bender), [Polyverse Manipulator](https://polyversemusic.com/products/manipulator/) | pitch and formant, more of it | same — the artefacts are the enemy, not the product |
+| [Baby Audio Warp](https://babyaud.io/) | time-stretch as an effect | changes the length, which is the whole thing being avoided here |
+| Melodyne, Serato Pitch'n Time | best-in-class stretching | studio tools whose entire goal is that you cannot hear them |
+| RC-20 Retro Color, SketchCassette | lo-fi character on a vocal | tape, noise and bit-crushing — a completely different kind of damage |
+
+Every stretching tool on the market competes on how *little* of this you can
+hear. This one is the artefact, on purpose, with the time change taken out.
+
+## Install
+
+Download from [Releases](https://github.com/kevkloud/kloudvocalshift/releases),
+unzip, drag into your plugin folder. Full instructions, including the macOS
+Gatekeeper step, are in [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Build
 

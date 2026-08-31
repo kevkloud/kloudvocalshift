@@ -73,6 +73,13 @@ public:
     int getWindow() const noexcept         { return chains[0].getWindow(); }
     double getSampleRate() const noexcept  { return sampleRate; }
 
+    /** Should stay at zero. An underrun moves everything after it a sample off
+        the grid, and nothing but this counter would show it. */
+    int getUnderruns() const noexcept
+    {
+        return chains[0].getUnderruns() + chains[1].getUnderruns();
+    }
+
     /** Returns true if the window size changed and the host needs to be told
         about the new latency. */
     bool setParams (const Params&) noexcept;

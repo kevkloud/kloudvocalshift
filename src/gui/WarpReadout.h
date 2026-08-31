@@ -6,15 +6,15 @@
 namespace kloudvocalshift::gui
 {
 
-/** The one thing on the panel that reports rather than controls.
+/** The strip under the header: the only thing on the panel that reports rather
+    than controls.
 
-    The two tempos, the ratio between them, the ratio actually being applied
-    after Amount, and the latency. It exists because the plugin's most
-    surprising property is that at equal tempos every control on it does
-    nothing, and a panel of knobs that are all up and all inaudible reads as
-    broken unless something says why. The latency is there because it is large,
-    it moves with Passes, and it is the number that decides whether you can
-    reach for this while monitoring a take.
+    The ratio actually being applied, the two tempos it came from, and the
+    latency. It is here because the plugin's most surprising property is that at
+    equal tempos every control on it does nothing, and a panel of knobs that are
+    all up and all inaudible reads as broken unless something says why. The
+    latency is here because it is large, it moves with Window and Passes, and it
+    is the number that decides whether you can reach for this while tracking.
 */
 class WarpReadout final : public juce::Component,
                           private juce::Timer

@@ -1,0 +1,143 @@
+name: release
+
+# Tags only. A release is a thing a stranger downloads and drags into their
+# system folder, so it is built from a clean checkout with universal binaries
+# and the same validation the branch builds run -- never uploaded by hand from
+# somebody's laptop.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (for a dry run)'
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+          - name: Windows
+            os: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Ensure Ninja
+        shell: bash
+        run: |
+          if ! command -v ninja >/dev/null 2>&1; then
+            if [ "${{ runner.os }}" = "macOS" ]; then brew install ninja; else choco install ninja -y; fi
+          fi
+
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Configure
+        shell: bash
+        run: |
+          args=(-B build -G Ninja -DCMAKE_BUILD_TYPE=Release)
+          # Intel Macs are still a large share of the people who will try this,
+          # and a release is the one build where paying double the compile time
+          # for a universal binary is obviously right.
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            args+=(-DCMAKE_OSX_ARCHITECTURES="arm64;x86_64")
+          fi
+          cmake "${args[@]}"
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Install pluginval
+        shell: bash
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            curl -sL https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_macOS.zip -o pluginval.zip
+            unzip -q pluginval.zip
+            echo "PLUGINVAL=$PWD/pluginval.app/Contents/MacOS/pluginval" >> $GITHUB_ENV
+          else
+            curl -sL https://github.com/Tracktion/pluginval/releases/latest/download/pluginval_Windows.zip -o pluginval.zip
+            unzip -q pluginval.zip
+            echo "PLUGINVAL=$PWD/pluginval.exe" >> $GITHUB_ENV
+          fi
+
+      - name: Validate
+        shell: bash
+        run: |
+          vst3=$(find build -type d -name 'KloudVocalShift.vst3' | head -1)
+          "$PLUGINVAL" --strictness-level 10 --validate-in-process --timeout-ms 300000 \
+                       --validate "$vst3"
+
+      - name: Verify universal binary
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          bin=$(find build -type f -path '*KloudVocalShift.vst3/Contents/MacOS/*' | head -1)
+          lipo -info "$bin"
+          lipo -info "$bin" | grep -q "x86_64 arm64\|arm64 x86_64"
+
+      - name: Package
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          stage="KloudVocalShift-$version-${{ matrix.name }}"
+          mkdir -p "$stage"
+
+          vst3=$(find build -type d -name 'KloudVocalShift.vst3' | head -1)
+          cp -R "$vst3" "$stage/"
+
+          au=$(find build -type d -name 'KloudVocalShift.component' | head -1 || true)
+          if [ -n "$au" ]; then cp -R "$au" "$stage/"; fi
+
+          cp LICENSE "$stage/LICENSE.txt"
+          cp README.md "$stage/README.md"
+          cp docs/INSTALL.md "$stage/INSTALL.txt"
+
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            # ditto rather than zip: it keeps the bundle structure and the
+            # resource forks that make a .component loadable.
+            ditto -c -k --sequesterRsrc --keepParent "$stage" "$stage.zip"
+          else
+            7z a -tzip "$stage.zip" "$stage"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KloudVocalShift-${{ matrix.name }}
+          path: '*.zip'
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+          draft: true
+          generate_release_notes: true
+          body_path: docs/RELEASE_NOTES_TEMPLATE.md
