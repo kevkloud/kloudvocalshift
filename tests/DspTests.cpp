@@ -102,13 +102,14 @@ int main()
         // further.
         auto p = defaults();
         p.amount = 100.0f;
-        p.passes = 3;
+        p.lock = 0.0f;
+        p.delivery = 100.0f;
 
         int latency = 0;
         const auto out = run (p, input, 512, kRate, &latency);
 
         check (nullAgainstDelayedInput (input, out, latency) < -120.0,
-               "equal tempos, Amount 100 %, 3 passes: still null");
+               "equal tempos, every character control at full: still null");
     }
 
     {
@@ -255,22 +256,54 @@ int main()
     }
 
     {
-        // More passes is more damage, not a different sound. Two round trips
-        // through the same ratio is what you would get by warping the clip,
-        // bouncing it, and warping the bounce.
-        auto one = defaults();
-        one.ratio = 1.2f;
-        one.passes = 1;
+        // Lock is a real axis, not a trim: fully locked and fully free are
+        // different sounds, and the level match holds across the whole sweep so
+        // they can be compared without reaching for a fader.
+        auto locked = defaults();
+        locked.ratio = 1.2f;
 
-        auto three = one;
-        three.passes = 3;
+        auto free = locked;
+        free.lock = 0.0f;
 
         int la = 0, lb = 0;
-        const auto a = run (one, input, 512, kRate, &la);
-        const auto b = run (three, input, 512, kRate, &lb);
+        const auto a = run (locked, input, 512, kRate, &la);
+        const auto b = run (free, input, 512, kRate, &lb);
 
-        check (crestDb (b, 8192 + lb, n - 40000 + lb) < crestDb (a, 8192 + la, n - 40000 + la),
-               "three passes flattens the pulse further than one");
+        double worst = 0.0;
+
+        for (size_t i = 20000; i < a.size(); ++i)
+            worst = std::max (worst, (double) std::abs (a[i] - b[i]));
+
+        check (toDb (worst / peakOf (input)) > -40.0, "Lock is audibly a control");
+
+        const auto levelOf = [&] (const std::vector<float>& x, int latency)
+        {
+            return toDb (rms (x, 8192 + latency, n - 40000 + latency)
+                           / rms (input, 8192, n - 40000));
+        };
+
+        // The whole reason phase locking is in here is that unlocking it costs
+        // level -- an early build lost 27 dB at full unlock, which reads as a
+        // broken plugin rather than a character control.
+        check (std::abs (levelOf (b, lb)) < 2.0,
+               "level holds within 2 dB with Lock all the way down");
+    }
+
+    {
+        // Delivery moves time around inside the clip and gives it back, so the
+        // clip has to come out the same length -- which for a streaming plugin
+        // means it must never have run the chain dry.
+        auto p = defaults();
+        p.ratio = 1.2f;
+        p.delivery = 100.0f;
+
+        const auto before = underruns;
+
+        int latency = 0;
+        const auto out = run (p, input, 512, kRate, &latency);
+
+        check (underruns == before, "Delivery at 100 % never starves the chain");
+        check (peakOf (out) > 0.0, "Delivery at 100 % still produces audio");
     }
 
     //== Formant ===============================================================

@@ -4,10 +4,10 @@ using namespace kloudvocalshift;
 
 namespace
 {
-    constexpr int kWidth = 568, kHeight = 208;
+    constexpr int kWidth = 700, kHeight = 208;
     constexpr int kMargin = 12, kGap = 10, kSectionPad = 8;
     constexpr int kHeader = 20, kReadout = 26, kCaption = 13, kFooter = 19;
-    constexpr int kSection = 158, kMeters = 40;
+    constexpr int kWarpWidth = 158, kCharacterWidth = 288, kMeters = 40;
 
     float raw (juce::AudioProcessorValueTreeState& s, const char* id)
     {
@@ -37,7 +37,9 @@ KloudVocalShiftAudioProcessorEditor::KloudVocalShiftAudioProcessorEditor (KloudV
       recorded   (p.getApvts(), params::kRecorded,   "Recorded",  false),
       playing    (p.getApvts(), params::kPlaying,    "Playing",   false),
       amount     (p.getApvts(), params::kAmount,     "Amount",    false),
+      lock       (p.getApvts(), params::kLock,       "Lock",      false),
       formant    (p.getApvts(), params::kFormant,    "Formant",   true),
+      delivery   (p.getApvts(), params::kDelivery,   "Delivery",  false),
       mix        (p.getApvts(), params::kMix,        "Mix",       false),
       trim       (p.getApvts(), params::kTrim,       "Trim",      true),
       followHost (p.getApvts(), params::kFollowHost, "FOLLOW HOST"),
@@ -49,7 +51,7 @@ KloudVocalShiftAudioProcessorEditor::KloudVocalShiftAudioProcessorEditor (KloudV
 
     addAndMakeVisible (readout);
 
-    for (auto* knob : { &recorded, &playing, &amount, &formant, &mix, &trim })
+    for (auto* knob : { &recorded, &playing, &amount, &lock, &formant, &delivery, &mix, &trim })
     {
         knob->setKnobDiameter (40);
         addAndMakeVisible (*knob);
@@ -58,19 +60,12 @@ KloudVocalShiftAudioProcessorEditor::KloudVocalShiftAudioProcessorEditor (KloudV
     for (auto* toggle : { &followHost, &bypass })
         addAndMakeVisible (*toggle);
 
-    // The items say what the control is, so neither selector needs a caption --
-    // which is most of what lets the panel fit at this width.
-    windowChooser.addItemList ({ "Short", "Normal", "Long" }, 1);
-    passesChooser.addItemList ({ "1 pass", "2 passes", "3 passes" }, 1);
-
+    // The items say what the control is, so it needs no caption of its own.
+    windowChooser.addItemList ({ "Short window", "Normal window", "Long window" }, 1);
     styleChooser (windowChooser);
-    styleChooser (passesChooser);
 
     windowAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
         p.getApvts(), params::kWindow, windowChooser);
-
-    passesAttachment = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (
-        p.getApvts(), params::kPasses, passesChooser);
 
     addAndMakeVisible (inputMeter);
     addAndMakeVisible (outputMeter);
@@ -124,43 +119,33 @@ void KloudVocalShiftAudioProcessorEditor::resized()
     outputMeter.setBounds (meters.reduced (3, 0));
     bounds.removeFromRight (kGap);
 
-    warpSection = bounds.removeFromLeft (kSection);
+    warpSection = bounds.removeFromLeft (kWarpWidth);
     bounds.removeFromLeft (kGap);
-    characterSection = bounds.removeFromLeft (kSection);
+    characterSection = bounds.removeFromLeft (kCharacterWidth);
     bounds.removeFromLeft (kGap);
     outputSection = bounds;
 
-    // Every section is two knobs over one footer row, so they are laid out by
-    // the same function rather than three near-identical blocks.
+    // Every section is a row of knobs over a single footer control, so one
+    // function lays out all three rather than three near-identical blocks.
     const auto layOut = [] (juce::Rectangle<int> section,
-                            gui::LabelledKnob& left, gui::LabelledKnob& right,
-                            juce::Component& footerLeft, juce::Component* footerRight)
+                            std::initializer_list<gui::LabelledKnob*> knobs,
+                            juce::Component& footerControl)
     {
         auto inner = section.reduced (kSectionPad);
         inner.removeFromTop (kCaption);
 
-        auto row = inner.removeFromTop (left.getPreferredHeight());
-        const auto cell = row.getWidth() / 2;
+        auto row = inner.removeFromTop ((*knobs.begin())->getPreferredHeight());
+        const auto cell = row.getWidth() / (int) knobs.size();
 
-        left.setBounds  (row.removeFromLeft (cell));
-        right.setBounds (row);
+        for (auto* knob : knobs)
+            knob->setBounds (row.removeFromLeft (cell));
 
-        auto footer = inner.removeFromBottom (kFooter);
-
-        if (footerRight == nullptr)
-        {
-            footerLeft.setBounds (footer);
-            return;
-        }
-
-        footerLeft.setBounds (footer.removeFromLeft (cell - 3));
-        footer.removeFromLeft (6);
-        footerRight->setBounds (footer);
+        footerControl.setBounds (inner.removeFromBottom (kFooter));
     };
 
-    layOut (warpSection,      recorded, playing, followHost, nullptr);
-    layOut (characterSection, amount,   formant, windowChooser, &passesChooser);
-    layOut (outputSection,    mix,      trim,    bypass, nullptr);
+    layOut (warpSection,      { &recorded, &playing },                    followHost);
+    layOut (characterSection, { &amount, &lock, &formant, &delivery },    windowChooser);
+    layOut (outputSection,    { &mix, &trim },                            bypass);
 }
 
 //==============================================================================

@@ -49,11 +49,24 @@ void SpectralStage::prepare (double sampleRate, int newFftSize)
     phase.assign (bins, 0.0);
     prevPhase.assign (bins, 0.0);
     sumPhase.assign (bins, 0.0);
+    sumFree.assign (bins, 0.0);
     expected.assign (bins, 0.0);
     peakOf.assign (bins, 0);
 
     for (size_t k = 0; k < bins; ++k)
         expected[k] = kTau * (double) k * (double) analysisHop / (double) fftSize;
+
+    // The fast follower tracks a syllable, the slow one tracks the passage it
+    // sits in; the difference between them is "is this frame loud for this
+    // performance", which is what Delivery steers on. Absolute level would
+    // steer on how hard the singer was mic'd.
+    const auto coeff = [this] (double ms)
+    {
+        return 1.0 - std::exp (-(double) analysisHop / (std::max (ms, 1.0) * 0.001 * rate));
+    };
+
+    envFastCoeff = coeff (35.0);
+    envSlowCoeff = coeff (900.0);
 
     logMag.assign ((size_t) fftSize, 0.0);
     envelope.assign ((size_t) fftSize, 0.0);
@@ -67,6 +80,7 @@ void SpectralStage::reset() noexcept
     std::fill (accum.begin(), accum.end(), 0.0f);
     std::fill (prevPhase.begin(), prevPhase.end(), 0.0);
     std::fill (sumPhase.begin(), sumPhase.end(), 0.0);
+    std::fill (sumFree.begin(), sumFree.end(), 0.0);
 
     ringPos = 0;
     hopCount = 0;
@@ -74,6 +88,9 @@ void SpectralStage::reset() noexcept
     writePos = 0;
     readPos = 0;
     writeCursor = 0.0;
+    nominalCursor = 0.0;
+    envFast = 0.0;
+    envSlow = 0.0;
     firstFrame = true;
 }
 
@@ -153,6 +170,7 @@ void SpectralStage::processFrame()
     {
         prevPhase = phase;
         sumPhase = phase;
+        sumFree = phase;
     }
 
     if (formantSemis != 0.0)
@@ -161,10 +179,13 @@ void SpectralStage::processFrame()
     // Where this frame lands in the output, and how far that is from where the
     // last one landed. This is the whole effect: everything the stage does to
     // the sound is a consequence of that distance not being the analysis hop.
+    const auto effectiveRatio = deliveryRatio();
+
     const auto frameStart = (long long) std::llround (writeCursor);
     const auto synthesisHop = firstFrame ? (long long) analysisHop : frameStart - writePos;
 
-    writeCursor += (double) analysisHop * ratio;
+    writeCursor += (double) analysisHop * effectiveRatio;
+    nominalCursor += (double) analysisHop * ratio;
 
     if (vocoderPhase)
     {
@@ -195,14 +216,19 @@ void SpectralStage::processFrame()
                     && m > magnitude[k - 1] && m > magnitude[k + 1]
                     && m > magnitude[k - 2] && m > magnitude[k + 2];
 
+            // Every bin gets its own free-running accumulator whether it is a
+            // peak or not, because Lock blends toward it. At full lock the
+            // free version is computed and thrown away, which costs a few
+            // multiplies and buys a control with no special cases in it.
+            const auto deviation = wrapToPi (phase[k] - prevPhase[k] - expected[k]);
+            const auto omega = (expected[k] + deviation) / (double) analysisHop;
+
+            sumFree[k] = wrapToPi (sumFree[k] + omega * (double) synthesisHop);
+
             if (isPeak || lastPeak < 0)
             {
                 lastPeak = (int) k;
-
-                const auto deviation = wrapToPi (phase[k] - prevPhase[k] - expected[k]);
-                const auto omega = (expected[k] + deviation) / (double) analysisHop;
-
-                sumPhase[k] = wrapToPi (sumPhase[k] + omega * (double) synthesisHop);
+                sumPhase[k] = sumFree[k];
             }
 
             peakOf[k] = lastPeak;
@@ -239,7 +265,12 @@ void SpectralStage::processFrame()
 
             // Rigid within a harmonic: the offset this bin had from its peak in
             // the analysis is the offset it keeps.
-            out = sumPhase[p] + (phase[k] - phase[p]);
+            const auto locked = sumPhase[p] + (phase[k] - phase[p]);
+
+            // Lock at 1 is exactly that. Lock at 0 is the free-running bin,
+            // which is the naive phase vocoder and sounds like one.
+            out = lock >= 1.0 ? locked
+                              : sumFree[k] + lock * wrapToPi (locked - sumFree[k]);
         }
         else
         {
@@ -266,7 +297,7 @@ void SpectralStage::processFrame()
     // The exact average hop rather than this frame's rounded one, so the
     // rounding between 426 and 427 samples does not amplitude-modulate the
     // output at the frame rate.
-    const auto norm = (double) analysisHop * ratio / (0.375 * (double) fftSize);
+    const auto norm = (double) analysisHop * effectiveRatio / (0.375 * (double) fftSize);
 
     // Grow before writing: a frame lands N samples past its own start, and the
     // read head is only ever let up to the start.
@@ -283,6 +314,68 @@ void SpectralStage::processFrame()
     writePos = frameStart;
 
     compact();
+}
+
+//==============================================================================
+/** Delivery: the ratio this frame actually gets, rather than the nominal one.
+
+    Singing to a 100 BPM click and hearing it at 120 shortens every syllable and
+    lengthens every gap. That is a *timing* change, so it looks like the one
+    thing a plugin doing this in place cannot have -- but it only has to net to
+    zero, not be zero everywhere. Compress the loud frames, stretch the quiet
+    ones, and hold the running total with a debt controller: syllables get
+    shorter, gaps get longer, onsets stay on the grid and the clip is still the
+    same length.
+
+    At amount 0 every term collapses to exactly 1 -- the modulation by
+    construction, and the debt because nominalCursor and writeCursor have then
+    been fed the identical sequence of additions -- so the stage stays a
+    bit-exact identity.
+*/
+double SpectralStage::deliveryRatio() noexcept
+{
+    if (deliveryAmount <= 0.0)
+        return ratio;
+
+    double energy = 0.0;
+
+    for (size_t k = 0; k < magnitude.size(); ++k)
+        energy += magnitude[k] * magnitude[k];
+
+    energy = std::sqrt (energy);
+
+    envFast += envFastCoeff * (energy - envFast);
+    envSlow += envSlowCoeff * (energy - envSlow);
+
+    // How loud this frame is for this performance, in octaves, squashed to
+    // -1..1. Silence reads as quiet rather than as a divide by zero.
+    const auto loudness = envSlow > 1.0e-9
+        ? std::tanh (std::log2 (std::max (envFast, 1.0e-12) / envSlow))
+        : -1.0;
+
+    // Loud compresses, quiet stretches.
+    auto modulation = std::pow (std::max (deliverySpeed, 1.0e-3), -loudness);
+
+    modulation = 1.0 + deliveryAmount * (modulation - 1.0);
+
+    // Debt, in hops. Positive means the modulation has taken time it has not
+    // given back yet. A gentle pull keeps the average honest without fighting
+    // the modulation inside a syllable, which is what an earlier, much tighter
+    // controller did -- it cancelled the effect it was supposed to be
+    // regulating.
+    const auto debtHops = (nominalCursor - writeCursor) / (double) analysisHop;
+
+    modulation *= std::exp (std::clamp (debtHops / 48.0, -0.6, 0.6));
+
+    // Then a hard stop. Past this the chain would be waiting on samples that
+    // have not been produced, which is an underrun, which is a click. The
+    // budget for it is bought in WarpChain's margin.
+    if (debtHops > kMaxDebtHops)
+        modulation = std::max (modulation, 1.0);
+    else if (debtHops < -kMaxDebtHops)
+        modulation = std::min (modulation, 1.0);
+
+    return ratio * std::clamp (modulation, 0.55, 1.8);
 }
 
 //==============================================================================

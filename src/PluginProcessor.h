@@ -86,7 +86,8 @@ private:
     std::atomic<float>* playingParam    = nullptr;
     std::atomic<float>* followHostParam = nullptr;
     std::atomic<float>* amountParam     = nullptr;
-    std::atomic<float>* passesParam     = nullptr;
+    std::atomic<float>* lockParam       = nullptr;
+    std::atomic<float>* deliveryParam   = nullptr;
     std::atomic<float>* formantParam    = nullptr;
     std::atomic<float>* windowParam     = nullptr;
     std::atomic<float>* mixParam        = nullptr;

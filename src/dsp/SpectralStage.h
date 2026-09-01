@@ -56,6 +56,38 @@ public:
         phase vocoder. */
     void setVocoderPhase (bool shouldUseVocoder) noexcept { vocoderPhase = shouldUseVocoder; }
 
+    /** How rigidly the bins around a spectral peak are held to that peak.
+
+        1 is identity phase locking: each harmonic stays internally rigid and
+        only drifts against its neighbours. 0 is the naive phase vocoder, every
+        bin propagated on its own -- which is where the hollow, chorusing,
+        underwater quality of a bad time-stretch comes from, and it is a sound
+        people actually want. Anything between is a blend of the two phases. */
+    void setLock (double amount) noexcept { lock = amount; }
+
+    /** How far the delivery modulation is allowed to run ahead of the nominal
+        ratio before it is forced back, in analysis hops. This is the whole
+        reason Delivery costs latency: banked time is time the chain has not
+        produced yet, and something downstream has to be able to wait for it. */
+    static constexpr double kMaxDebtHops = 3.0;
+
+    /** Delivery: a per-frame modulation of the ratio, driven by how loud the
+        frame is relative to the recent past.
+
+        Loud frames are compressed and quiet ones are stretched, so syllables
+        get shorter and the gaps between them get longer -- which is what a
+        performance sounds like when it was sung to a slower click. A debt
+        controller holds the running total at the nominal ratio, so the clip
+        does not change length and every onset stays where it was.
+
+        `amount` is 0 to 1. `speed` is how far the modulation swings, and is
+        normally the warp ratio itself. */
+    void setDelivery (double amount, double speed) noexcept
+    {
+        deliveryAmount = amount;
+        deliverySpeed = speed;
+    }
+
     int getWindow() const noexcept { return fftSize; }
 
     void push (const float* input, int numSamples);
@@ -68,6 +100,7 @@ public:
 
 private:
     void processFrame();
+    double deliveryRatio() noexcept;
     void applyFormantShift() noexcept;
     void compact();
 
@@ -78,7 +111,18 @@ private:
     double rate = 48000.0;
     double ratio = 1.0;
     double formantSemis = 0.0;
+    double lock = 1.0;
+    double deliveryAmount = 0.0;
+    double deliverySpeed = 1.0;
     bool vocoderPhase = false;
+
+    // Delivery state. `nominal` is where writeCursor would be if the ratio had
+    // never been modulated; the difference between them is the debt the
+    // controller is paying off, and holding it near zero is what keeps the
+    // output the same length as the input.
+    double nominalCursor = 0.0;
+    double envFast = 0.0, envSlow = 0.0;
+    double envFastCoeff = 0.0, envSlowCoeff = 0.0;
 
     std::vector<double> window;
     std::vector<float> inRing;
@@ -95,7 +139,7 @@ private:
     bool firstFrame = true;
 
     std::vector<std::complex<double>> spectrum, scratch;
-    std::vector<double> magnitude, phase, prevPhase, sumPhase, expected;
+    std::vector<double> magnitude, phase, prevPhase, sumPhase, sumFree, expected;
     std::vector<int> peakOf;
     std::vector<double> logMag, envelope;
 };

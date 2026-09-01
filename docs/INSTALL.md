@@ -58,8 +58,8 @@ Delete the files. Nothing else is written anywhere.
 
 ## Latency
 
-This plugin has a large, honest latency -- around 128 ms at its default
-settings. Your DAW compensates for it automatically when you play back the
+This plugin has a large, honest latency -- 128 ms at its default window, 256 ms
+on Long. Your DAW compensates for it automatically when you play back the
 arrangement, so everything stays in time. It is **not** suitable for monitoring
 yourself through while recording a take. Record dry, then put this on the
 channel.

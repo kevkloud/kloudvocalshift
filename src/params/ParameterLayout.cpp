@@ -51,11 +51,25 @@ juce::AudioProcessorValueTreeState::ParameterLayout create()
         juce::NormalisableRange<float> { 0.0f, 100.0f, 0.1f }, 100.0f,
         Attributes {}.withLabel ("%").withStringFromValueFunction (percent)));
 
-    // Passes is stepped and changes the latency, so it is a selector rather than
-    // a knob: it is a decision, not something to ride.
-    layout.add (std::make_unique<juce::AudioParameterChoice> (
-        juce::ParameterID { kPasses, kVersionHint }, "Passes",
-        juce::StringArray { "1", "2", "3" }, 0));
+    // Lock is how rigidly each harmonic is held together. 100 % is identity
+    // phase locking, which is what Live does and what keeps the level up. Down
+    // at 0 it is the naive phase vocoder every bin propagated on its own, which
+    // is the hollow underwater sound of a bad time-stretch -- and is a thing
+    // people want on purpose.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kLock, kVersionHint }, "Lock",
+        juce::NormalisableRange<float> { 0.0f, 100.0f, 0.1f }, 100.0f,
+        Attributes {}.withLabel ("%").withStringFromValueFunction (percent)));
+
+    // Delivery shortens syllables and lengthens the gaps between them, which is
+    // what a performance sounds like when it was sung to a slower click. It
+    // defaults to off: it is the one control here that is not reproducing
+    // anything a warp does to the signal, and it is the one that reserves extra
+    // buffer and so changes the reported latency the moment it leaves zero.
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { kDelivery, kVersionHint }, "Delivery",
+        juce::NormalisableRange<float> { 0.0f, 100.0f, 0.1f }, 0.0f,
+        Attributes {}.withLabel ("%").withStringFromValueFunction (percent)));
 
     // Continuous rather than stepped: a snap interval is not exactly
     // representable in float, so NormalisableRange rounds the 0 default a few

@@ -83,7 +83,7 @@ int main (int argc, char** argv)
     }
     else if (mode == "windows")
     {
-        std::printf ("  window   samples   crest dB at 1.2x   pulse lost   1 pass    3 passes\n");
+        std::printf ("  window   samples   crest dB at 1.2x   pulse lost   latency   + Delivery\n");
 
         for (const auto w : { Window::shortWindow, Window::normal, Window::longWindow })
         {
@@ -95,21 +95,21 @@ int main (int argc, char** argv)
             p.window = w;
             core.setParams (p);
 
-            const auto one = core.getLatencySamples();
+            const auto plain = core.getLatencySamples();
 
-            p.passes = 3;
+            p.delivery = 100.0f;
             core.setParams (p);
-            const auto three = core.getLatencySamples();
+            const auto withDelivery = core.getLatencySamples();
 
-            p.passes = 1;
+            p.delivery = 0.0f;
             const auto out = run (p, input);
 
             std::printf ("  %-8s %-9d %-18.2f %-12.2f %-9.1f %.1f\n",
                          windowName (w), core.getWindow(),
                          crestDb (out, kFrom + lastLatency, kTo + lastLatency),
                          crestDb (out, kFrom + lastLatency, kTo + lastLatency) - dryCrest,
-                         1000.0 * (double) one / kRate,
-                         1000.0 * (double) three / kRate);
+                         1000.0 * (double) plain / kRate,
+                         1000.0 * (double) withDelivery / kRate);
         }
     }
     else if (mode == "formant")

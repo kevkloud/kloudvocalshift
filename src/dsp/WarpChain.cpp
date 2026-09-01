@@ -6,9 +6,9 @@
 namespace kloudvocalshift
 {
 
-void WarpChain::prepare (double sampleRate, int fftSize, int maxBlockSize, int passes)
+void WarpChain::prepare (double sampleRate, int fftSize, int maxBlockSize, bool deliveryEnabled)
 {
-    activePasses = std::clamp (passes, 1, kMaxPasses);
+    deliveryReserved = deliveryEnabled;
 
     windowSize = fftSize;
     analysisHop = fftSize / 4;
@@ -51,7 +51,7 @@ void WarpChain::reset()
     // comfortably past the point where the last stage has started emitting.
     const std::vector<float> silence ((size_t) analysisHop, 0.0f);
 
-    for (int fed = 0; fed < activeStages * windowSize + 4 * analysisHop; fed += analysisHop)
+    for (int fed = 0; fed < kStages * windowSize + 4 * analysisHop; fed += analysisHop)
         pump (silence.data());
 
     fifoRead = 0;
@@ -61,7 +61,8 @@ void WarpChain::reset()
 }
 
 //==============================================================================
-void WarpChain::setWarp (double newRatio, double newFormant) noexcept
+void WarpChain::setWarp (double newRatio, double newFormant,
+                         double lock, double delivery) noexcept
 {
     ratio = newRatio;
     formantSemis = newFormant;
@@ -74,29 +75,35 @@ void WarpChain::setWarp (double newRatio, double newFormant) noexcept
     // until the two tempos differ.
     const auto engaged = (ratio != 1.0);
 
-    for (int i = 0; i < activeStages; ++i)
-        stages[(size_t) i].setVocoderPhase (engaged);
-
-    for (int p = 0; p < activePasses; ++p)
+    for (auto& s : stages)
     {
-        // Stretch by the ratio, then put the length back. Whichever way round
-        // the tempo went, both stages run; the sound is not symmetrical about
-        // 1, and neither is what people reach for.
-        stages[(size_t) (2 * p)].setRatio (1.0 / ratio);
-        stages[(size_t) (2 * p + 1)].setRatio (ratio);
+        s.setVocoderPhase (engaged);
+        s.setLock (lock);
     }
 
-    stages[(size_t) (activeStages - 1)].setFormant (formantSemis);
+    // Delivery rides on the first stage only. It is a modulation of that
+    // stage's ratio, and the debt controller inside it already nets to zero, so
+    // putting it on more than one stage would multiply the swing without
+    // pinning the onsets any harder.
+    stages[0].setDelivery (engaged ? delivery : 0.0, ratio >= 1.0 ? ratio : 1.0 / ratio);
+
+    // Stretch by the ratio, then put the length back. Whichever way round the
+    // tempo went, both stages run; the sound is not symmetrical about 1, and
+    // neither is what people reach for.
+    stages[0].setRatio (1.0 / ratio);
+    stages[1].setRatio (ratio);
+
+    stages[1].setFormant (formantSemis);
 }
 
 void WarpChain::rebuild() noexcept
 {
-    activeStages = 2 * activePasses;
-
-    for (int i = 0; i < activeStages; ++i)
+    for (auto& s : stages)
     {
-        stages[(size_t) i].setVocoderPhase (true);
-        stages[(size_t) i].setFormant (0.0);
+        s.setVocoderPhase (true);
+        s.setFormant (0.0);
+        s.setLock (1.0);
+        s.setDelivery (0.0, 1.0);
     }
 
     // A window per stage, plus margin.
@@ -104,16 +111,19 @@ void WarpChain::rebuild() noexcept
     // The margin is burst jitter, not start-up -- the priming in reset() deals
     // with that. Each stage releases only up to the start of its latest frame,
     // so it hands the next stage an irregular trickle, and every stage adds
-    // about a hop of that. Swept over every ratio, block size and pass count,
-    // the chain needs stages + 1 hops before it stops underrunning; this is
-    // that plus one, because an underrun shifts everything after it a sample
-    // off the grid and is exactly the kind of thing nobody catches by ear.
-    // Not start-up -- the priming in reset() has already dealt with that. The
-    // figure is exact, and asserted against a measured impulse in the tests,
-    // because a plugin that misreports its latency drags everything downstream
-    // of it off the grid and the host has no way to notice.
-    margin = (activeStages + 2) * analysisHop;
-    latency = activeStages * windowSize + margin;
+    // about a hop of that. Swept over every ratio, block size and window, the
+    // chain needs stages + 1 hops before it stops underrunning; this is that
+    // plus one, because an underrun shifts everything after it a sample off the
+    // grid and is exactly the kind of thing nobody catches by ear.
+    //
+    // Delivery banks time inside a syllable and gives it back in the gap, so it
+    // needs its own budget on top -- which is why turning it up from zero is
+    // the one knob move on the panel that changes the reported latency.
+    const auto marginHops = kStages + 2
+                              + (deliveryReserved ? (int) (2.0 * SpectralStage::kMaxDebtHops) : 0);
+
+    margin = marginHops * analysisHop;
+    latency = kStages * windowSize + margin;
 }
 
 //==============================================================================
@@ -164,16 +174,16 @@ void WarpChain::pump (const float* chunk)
     int count = analysisHop;
     std::copy (chunk, chunk + analysisHop, ping.begin());
 
-    for (int i = 0; i < activeStages; ++i)
+    for (auto& s : stages)
     {
-        stages[(size_t) i].push (ping.data(), count);
+        s.push (ping.data(), count);
 
-        const auto ready = stages[(size_t) i].available();
+        const auto ready = s.available();
 
         if ((int) pong.size() < ready)
             pong.resize ((size_t) ready * 2, 0.0f);
 
-        count = stages[(size_t) i].pop (pong.data(), ready);
+        count = s.pop (pong.data(), ready);
 
         ping.swap (pong);
     }

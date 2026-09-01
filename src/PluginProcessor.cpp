@@ -7,9 +7,9 @@ namespace
 {
     /** Window is the only parameter that changes the frame size, and so the
         only one that can change the reported latency. */
-    /** Window and Passes are the only parameters that change the chain's shape,
-        and so the only ones that can change the reported latency. */
-    const juce::StringArray kLatencyAffecting { params::kWindow, params::kPasses };
+    /** Window changes the chain's shape, and Delivery reserves extra buffer the
+        moment it leaves zero. They are the only two that move the latency. */
+    const juce::StringArray kLatencyAffecting { params::kWindow, params::kDelivery };
 }
 
 KloudVocalShiftAudioProcessor::KloudVocalShiftAudioProcessor()
@@ -22,7 +22,8 @@ KloudVocalShiftAudioProcessor::KloudVocalShiftAudioProcessor()
     playingParam    = apvts.getRawParameterValue (params::kPlaying);
     followHostParam = apvts.getRawParameterValue (params::kFollowHost);
     amountParam     = apvts.getRawParameterValue (params::kAmount);
-    passesParam     = apvts.getRawParameterValue (params::kPasses);
+    lockParam       = apvts.getRawParameterValue (params::kLock);
+    deliveryParam   = apvts.getRawParameterValue (params::kDelivery);
     formantParam    = apvts.getRawParameterValue (params::kFormant);
     windowParam     = apvts.getRawParameterValue (params::kWindow);
     mixParam        = apvts.getRawParameterValue (params::kMix);
@@ -99,8 +100,8 @@ DspCore::Params KloudVocalShiftAudioProcessor::currentParams() noexcept
 
     p.ratio        = juce::jlimit (0.25f, 4.0f, playing / recorded);
     p.amount       = amountParam->load (std::memory_order_relaxed);
-    p.passes       = 1 + juce::jlimit (0, WarpChain::kMaxPasses - 1,
-                             (int) passesParam->load (std::memory_order_relaxed));
+    p.lock         = lockParam->load (std::memory_order_relaxed);
+    p.delivery     = deliveryParam->load (std::memory_order_relaxed);
     p.formantSemis = formantParam->load (std::memory_order_relaxed);
     p.mixPercent   = mixParam->load (std::memory_order_relaxed);
     p.trimDb       = trimParam->load (std::memory_order_relaxed);

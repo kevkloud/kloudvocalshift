@@ -6,8 +6,8 @@ happens to the timing. VST3 / AU / Standalone.
 Track at the song's tempo, hear the song's rhythm, and still get the sound you
 were getting by tracking at 100 and playing it back at 120.
 
-**This is a mixing plugin, not a tracking one.** It costs around 128 ms of
-latency. Your DAW compensates for that on playback and everything stays in time,
+**This is a mixing plugin, not a tracking one.** It costs 128 ms of latency at
+its default window, 256 ms on Long. Your DAW compensates for that on playback and everything stays in time,
 but you cannot monitor yourself through it while you record. Record dry, then
 reach for it.
 
@@ -95,13 +95,21 @@ nothing.
 Propagating every bin on its own is also what makes a bad time-stretch sound
 like a chorus pedal, and it costs a lot of level: bins that belong to the same
 harmonic drift apart, the overlapping frames stop adding coherently, and an
-early build of this lost **27 dB** at three passes.
+early build of this lost **27 dB**.
 
 So the phase is **identity phase-locked** (Laroche and Dolson), which is what
 Live does too. Only spectral peaks are propagated; every other bin is pinned to
 its peak with the offset it had in the analysis, so each harmonic stays
 internally rigid. What is deliberately *not* locked is one harmonic to the next
-— that drift is the effect. The same three passes now lose **0.4 dB**.
+— that drift is the effect. Level now holds within **half a dB** across the
+whole range, and the **Lock** knob puts the amount of it under your hand.
+
+Locking is also why the **Long** window sounds cleanest, which is not the
+obvious result. Peak-picking needs to be able to see individual harmonics, and
+at 1024 samples the bins are 47 Hz apart — too coarse to resolve a 120 Hz
+fundamental's harmonics, so the peaks are wrong, the locking degrades and you
+hear chorusing. At 4096 the bins are 12 Hz apart and it works. Long is both the
+strongest and the least artefacty setting.
 
 ## The controls
 
@@ -110,7 +118,9 @@ internally rigid. What is deliberately *not* locked is one harmonic to the next
 | **Recorded** / **Playing** | the two tempos. The ratio between them is the warp. |
 | **Follow Host** | takes Playing from the transport, so it cannot drift out of sync with the song. |
 | **Amount** | interpolates the ratio toward 1. Not a dry/wet — half a warp is what warping to 110 instead of 120 sounds like, whereas half the wet signal is a chorus. |
-| **Passes** | how many times to run the round trip. One is a warp. Three is a warp, a bounce, and a warp of the bounce. |
+
+| **Lock** | how rigidly each harmonic is held together. 100 % is what Live does. Down at 0 it is the naive phase vocoder — hollow, underwater, chorusing. |
+| **Delivery** | shortens syllables and lengthens the gaps, the way singing to a slower click does. Off by default, and the one control that changes the latency when it leaves zero. |
 | **Formant** | envelope shift in semitones. Up is thinner. |
 | **Window** | Short keeps consonants and hits harder; Long stops sounding like a warp and starts sounding like a freeze. |
 | **Mix**, **Trim**, **Bypass** | output. |
@@ -122,7 +132,7 @@ From `tests/DspTests.cpp`, which asserts every claim below.
 | | |
 |---|---|
 | Equal tempos | null to **−138 dB** against the delayed input |
-| Equal tempos, Amount 100 %, 3 passes | still null |
+| Equal tempos, every character control at full | still null |
 | Amount at 0 % | null |
 | Bypass, Mix at 0 % | null |
 | Reported latency | equals the **measured** impulse delay, exactly |
@@ -130,8 +140,9 @@ From `tests/DspTests.cpp`, which asserts every claim below.
 | Block size 128 vs 480, formant engaged | **bitwise identical** |
 | Same settings twice | **bitwise identical** |
 | Silence in | silence out |
-| Level change, whole ratio range | within **0.26 dB** |
-| Loudest output over ratio × formant | **+3.1 dB** |
+| Level change, whole ratio range | within **0.55 dB** |
+| Level with Lock all the way down | within **2 dB**, where a naive vocoder loses 27 |
+| Loudest output over ratio × formant | **+5.8 dB** |
 | 44.1 / 48 / 88.2 / 96 kHz | null at all four |
 | Buffer underruns, whole suite | **zero**, across every ratio × window × pass × block size |
 
@@ -143,29 +154,32 @@ it pulls the peaks down and fills the gaps in. Regenerate with
 
 ```
   100 BPM to   ratio    crest dB   pulse lost   level
-  80           0.800    13.68      -3.45        -0.17 dB
-  90           0.900    14.56      -2.57        -0.14 dB
+  80           0.800    13.95      -3.19        -0.32 dB
+  90           0.900    16.02      -1.11        -0.16 dB
   100          1.000    17.13       0.00        -0.00 dB
-  110          1.100    14.01      -3.12        -0.16 dB
-  120          1.200    13.88      -3.25        -0.20 dB
-  140          1.400    12.78      -4.35        -0.26 dB
+  110          1.100    15.44      -1.70        +0.19 dB
+  120          1.200    14.59      -2.54        +0.35 dB
+  140          1.400    14.37      -2.76        +0.55 dB
 ```
 
-Three dB of pulse gone and a fifth of a dB of level: the plugin takes the body
+Several dB of pulse gone and a third of a dB of level: the plugin takes the body
 out without touching the loudness, which is the whole point and is also why it
-is hard to A/B any other way.
+is hard to A/B any other way. (Long window loses 4.45 dB at 1.2x — more than the
+table above, which is measured at the default.)
 
 ### Latency
 
-Stacked short-time transforms are not free. Two per pass, plus a buffer for the
-jitter between two stages whose ratios are reciprocal but whose frames do not
-line up.
+Two stacked short-time transforms are not free, and there is a buffer on top for
+the jitter between two stages whose ratios are reciprocal but whose frames do
+not line up. Delivery banks time inside a syllable to give back in the gap, so
+it needs its own budget — which is why it is the one knob that moves the
+number.
 
 ```
-  window   samples   1 pass     3 passes
-  Short    1024      64.0 ms    170.7 ms
-  Normal   2048      128.0 ms   341.3 ms
-  Long     4096      256.0 ms   682.7 ms
+  window   samples   latency    with Delivery
+  Short    1024      64.0 ms    96.0 ms
+  Normal   2048      128.0 ms   192.0 ms
+  Long     4096      256.0 ms   384.0 ms
 ```
 
 Reported to the host exactly — asserted against a measured impulse — so delay

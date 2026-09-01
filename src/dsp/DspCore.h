@@ -58,8 +58,9 @@ public:
     {
         float ratio        = 1.0f;     // playing tempo / recorded tempo
         float amount       = 100.0f;   // percent of that ratio actually applied
-        int   passes       = 1;
         float formantSemis = 0.0f;
+        float lock         = 100.0f;   // percent, 100 = fully phase-locked
+        float delivery     = 0.0f;     // percent
         float mixPercent   = 100.0f;
         float trimDb       = 0.0f;
         bool  bypass       = false;
@@ -98,7 +99,15 @@ private:
     std::array<WarpChain, kMaxChannels> chains;
     std::array<std::vector<float>, kMaxChannels> dryDelay;
 
-    std::vector<float> wetScratch, mixRamp, trimRamp;
+    std::array<std::vector<float>, kMaxChannels> wetScratch, dryScratch;
+    std::vector<float> mixRamp, trimRamp, gainRamp;
+
+    // Level matching. Relaxing Lock costs level -- that is what phase locking
+    // is for -- and at Lock 0 an early build lost 27 dB, which reads as a
+    // broken plugin rather than as a character control. A slow follower on both
+    // sides puts it back without touching anything at syllable scale.
+    double dryPower = 0.0, wetPower = 0.0, powerCoeff = 0.0;
+    float matchGain = 1.0f;
 
     int dryWrite = 0;
     int dryLength = 0;
@@ -107,7 +116,7 @@ private:
     int latencySamples = 0;
     int preparedChannels = 0;
     Window currentWindow = Window::normal;
-    int currentPasses = 1;
+    bool currentDelivery = false;
     int preparedBlockSize = 512;
 
     Smoother mix, trim;

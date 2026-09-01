@@ -7,14 +7,15 @@
 
 /** The panel.
 
-    Three groups of two knobs and a reporting strip, in one screenful with no
-    dead space. Left is the warp -- the two tempos and whether the second comes
-    from the host. Middle is the character of it. Right is output.
+    Three groups and a reporting strip, in one screenful with no dead space.
+    Left is the warp -- the two tempos and whether the second comes from the
+    host. Middle is the character of it. Right is output.
 
-    The two selectors carry their own meaning rather than a caption ("Normal",
-    "2 passes"), which is what lets the whole thing fit at this width. The
-    finish is FrostyEQ's and KloudFormant's, which is Ableton's: flat, no
-    bevels, thin value arcs, a dark well for anything that reports.
+    Inside CHARACTER the order is how far, how destroyed, how thin, how rushed,
+    which is roughly the order anyone reaches for them. The window selector
+    carries its own meaning rather than a caption. The finish is FrostyEQ's and
+    KloudFormant's, which is Ableton's: flat, no bevels, thin value arcs, a dark
+    well for anything that reports.
 */
 class KloudVocalShiftAudioProcessorEditor final : public juce::AudioProcessorEditor,
                                                   private juce::Timer
@@ -37,14 +38,13 @@ private:
     kloudvocalshift::gui::WarpReadout readout;
 
     kloudvocalshift::gui::LabelledKnob recorded, playing;
-    kloudvocalshift::gui::LabelledKnob amount, formant;
+    kloudvocalshift::gui::LabelledKnob amount, lock, formant, delivery;
     kloudvocalshift::gui::LabelledKnob mix, trim;
 
     kloudvocalshift::gui::SwitchButton followHost, bypass;
 
-    juce::ComboBox windowChooser, passesChooser;
-    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> windowAttachment,
-                                                                           passesAttachment;
+    juce::ComboBox windowChooser;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> windowAttachment;
 
     kloudvocalshift::gui::LevelMeter inputMeter, outputMeter;
 

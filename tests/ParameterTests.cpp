@@ -25,8 +25,8 @@ static void testSchemaIsStable()
     KloudVocalShiftAudioProcessor processor;
     auto& apvts = processor.getApvts();
 
-    for (auto id : { p::kRecorded, p::kPlaying, p::kFollowHost, p::kAmount, p::kPasses,
-                     p::kFormant, p::kWindow, p::kMix, p::kTrim, p::kBypass })
+    for (auto id : { p::kRecorded, p::kPlaying, p::kFollowHost, p::kAmount, p::kLock,
+                     p::kDelivery, p::kFormant, p::kWindow, p::kMix, p::kTrim, p::kBypass })
         check (apvts.getParameter (id) != nullptr,
                std::string ("parameter '") + id + "' still exists");
 
@@ -39,8 +39,14 @@ static void testSchemaIsStable()
     check (apvts.getRawParameterValue (p::kFormant)->load() == 0.0f,
            "Formant defaults to exactly 0 semitones");
 
-    check (apvts.getRawParameterValue (p::kPasses)->load() == 0.0f,
-           "Passes defaults to 1");
+    check (apvts.getRawParameterValue (p::kLock)->load() == 100.0f,
+           "Lock defaults to fully locked");
+
+    // Exactly zero, not near it: Delivery is the one control that reserves
+    // extra buffer, and a default a hair off zero would cost every user 50 %
+    // more latency for a feature they never turned on.
+    check (apvts.getRawParameterValue (p::kDelivery)->load() == 0.0f,
+           "Delivery defaults to exactly off");
 }
 
 /** State has to survive a round trip through the host's project file. */
@@ -69,28 +75,30 @@ static void testStateRoundTrip()
            "Formant survives a save and reload");
 }
 
-/** The host is told a latency, and it has to be told again when Passes moves. */
+/** The host is told a latency, and it has to be told again when Delivery
+    leaves zero -- which is the only knob move on the panel that changes it. */
 static void testLatencyIsReported()
 {
     KloudVocalShiftAudioProcessor processor;
     processor.prepareToPlay (48000.0, 512);
 
-    const auto atOnePass = processor.getLatencySamples();
+    const auto plain = processor.getLatencySamples();
 
-    check (atOnePass > 0, "a latency is reported");
+    check (plain > 0, "a latency is reported");
 
-    auto* passes = processor.getApvts().getParameter (p::kPasses);
-    passes->setValueNotifyingHost (1.0f);
+    auto* deliveryParam = processor.getApvts().getParameter (p::kDelivery);
+    deliveryParam->setValueNotifyingHost (1.0f);
 
     juce::AudioBuffer<float> buffer (2, 512);
     juce::MidiBuffer midi;
     buffer.clear();
+
+    // The audio thread is what rebuilds the chain, so the new figure is only
+    // knowable once a block has been through it.
     processor.processBlock (buffer, midi);
 
-    // The audio thread is what actually rebuilds the chain, so the new figure
-    // is only knowable after a block has been through it.
-    check (processor.getApvts().getRawParameterValue (p::kPasses)->load() > 0.0f,
-           "Passes moved");
+    check (processor.getApvts().getRawParameterValue (p::kDelivery)->load() > 0.0f,
+           "Delivery moved");
 }
 
 /** A block of audio goes through the whole wrapper without producing anything

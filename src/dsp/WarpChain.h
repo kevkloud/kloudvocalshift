@@ -41,22 +41,26 @@ enum class Window { shortWindow = 0, normal = 1, longWindow = 2 };
 class WarpChain
 {
 public:
-    static constexpr int kMaxPasses = 3;
-    static constexpr int kMaxStages = 2 * kMaxPasses;
+    // One warp and one unwarp. There was a Passes control that ran the pair
+    // more than once; it was removed. Each extra pass re-analyses the previous
+    // pass's already-decohered output, so the peak estimates get worse and the
+    // phase locking degrades -- which does not deepen the effect, it just adds
+    // chorusing. Lock is the control for wanting more, and it costs nothing.
+    static constexpr int kStages = 2;
 
-    void prepare (double sampleRate, int fftSize, int maxBlockSize, int passes);
+    void prepare (double sampleRate, int fftSize, int maxBlockSize, bool deliveryEnabled);
     void reset();
 
     /** ratio is playing tempo over recorded tempo. Cheap: it only retargets
         the stages, so it is safe to call every block. Changing the pass count
         is not -- that is a prepare(), because it changes the latency. */
-    void setWarp (double ratio, double formantSemis) noexcept;
+    void setWarp (double ratio, double formantSemis, double lock, double delivery) noexcept;
 
     int getWindow() const noexcept  { return windowSize; }
-    int getPasses() const noexcept  { return activePasses; }
 
-    /** Constant for a given window and pass count -- it does not move when the
-        ratio or the formant shift changes. */
+    /** Constant for a given window, and for whether Delivery is engaged at all.
+        It does not move with the ratio, the formant shift, the lock, or how far
+        Delivery is turned up. */
     int getLatencySamples() const noexcept { return latency; }
 
     /** In place. Input and output are the same length, always. */
@@ -69,13 +73,12 @@ public:
 private:
     void rebuild() noexcept;
 
-    std::array<SpectralStage, kMaxStages> stages;
+    std::array<SpectralStage, kStages> stages;
 
     int windowSize = 0;
     int analysisHop = 0;
-    int activeStages = 1;
-    int activePasses = 1;
     int latency = 0;
+    bool deliveryReserved = false;
 
     double ratio = 1.0;
     double formantSemis = 0.0;
